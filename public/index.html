@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jogo de Botões 3D - Brasileirão</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
+    canvas { display: block; }
+
+    /* HUD do placar */
+    #hud {
+      position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.8); color: #fff; padding: 10px 30px;
+      border-radius: 10px; font-size: 22px; z-index: 10;
+      border: 2px solid #ffd700; display: none;
+    }
+    #hud .azul { color: #4488ff; }
+    #hud .vermelho { color: #ff4444; }
+
+    /* Mensagem de gol */
+    #golMsg {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      font-size: 80px; font-weight: bold; color: #ffd700;
+      text-shadow: 3px 3px 6px rgba(0,0,0,0.8);
+      display: none; z-index: 20; pointer-events: none;
+    }
+
+    /* Instruções */
+    #instrucoes {
+      position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.6); color: #ccc; padding: 8px 20px;
+      border-radius: 8px; font-size: 13px; z-index: 10; display: none;
+    }
+
+    /* MENU PRINCIPAL */
+    #menu {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: linear-gradient(135deg, #0a1628 0%, #1a3a5c 50%, #0a1628 100%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    #menu h1 {
+      color: #ffd700; font-size: 42px; margin-bottom: 8px;
+      text-shadow: 2px 2px 8px rgba(0,0,0,0.5);
+    }
+    #menu h2 {
+      color: #aaa; font-size: 16px; margin-bottom: 40px; font-weight: normal;
+    }
+    .menu-btn {
+      display: block; width: 300px; padding: 16px; margin: 8px;
+      border: 2px solid #ffd700; border-radius: 12px;
+      background: rgba(255,215,0,0.1); color: #ffd700;
+      font-size: 18px; cursor: pointer; transition: all 0.3s;
+    }
+    .menu-btn:hover {
+      background: rgba(255,215,0,0.3); transform: scale(1.05);
+    }
+    .menu-btn.secondary {
+      border-color: #888; color: #ccc; background: rgba(255,255,255,0.05);
+    }
+    .menu-btn.secondary:hover {
+      background: rgba(255,255,255,0.15);
+    }
+
+    /* PAINEL ONLINE */
+    #painelOnline {
+      display: none; text-align: center;
+    }
+    #painelOnline input {
+      padding: 12px 16px; border-radius: 8px; border: 2px solid #ffd700;
+      background: rgba(0,0,0,0.5); color: #fff; font-size: 16px;
+      width: 280px; margin: 6px; outline: none;
+    }
+    #painelOnline input::placeholder { color: #777; }
+    .sala-item {
+      background: rgba(255,255,255,0.1); padding: 12px; margin: 6px;
+      border-radius: 8px; color: #ccc; cursor: pointer; transition: all 0.2s;
+      border: 1px solid #555;
+    }
+    .sala-item:hover { background: rgba(255,215,0,0.2); border-color: #ffd700; }
+    #salaInfo {
+      color: #ffd700; font-size: 18px; margin: 15px 0;
+    }
+    #msgErro {
+      color: #ff4444; font-size: 14px; margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <!-- MENU PRINCIPAL -->
+  <div id="menu">
+    <h1>⚽ Jogo de Botões 3D</h1>
+    <h2>Brasileirão - Escolha o modo de jogo</h2>
+
+    <div id="menuPrincipal">
+      <button class="menu-btn" onclick="iniciarContraMaquina()">🤖 Jogar contra a Máquina</button>
+      <button class="menu-btn" onclick="mostrarOnline()">🌐 Jogar Online</button>
+    </div>
+
+    <div id="painelOnline">
+      <input type="text" id="inputNome" placeholder="Seu nome" maxlength="15">
+      <br>
+      <button class="menu-btn" onclick="criarSala()">Criar Sala</button>
+      <button class="menu-btn secondary" onclick="listarSalas()">Ver Salas Disponíveis</button>
+      <div id="listaSalas"></div>
+      <div>
+        <input type="text" id="inputSalaId" placeholder="Código da sala" maxlength="8" style="text-transform:uppercase">
+        <button class="menu-btn secondary" onclick="entrarSalaCodigo()" style="width:280px">Entrar na Sala</button>
+      </div>
+      <div id="salaInfo"></div>
+      <div id="msgErro"></div>
+      <button class="menu-btn secondary" onclick="voltarMenu()" style="width:200px;margin-top:20px">← Voltar</button>
+    </div>
+  </div>
+
+  <div id="hud">
+    <span class="azul">Azul</span> <span id="placarAzul">0</span> x <span id="placarVermelho">0</span> <span class="vermelho">Vermelho</span>
+  </div>
+  <div id="golMsg">GOOOL!</div>
+  <div id="instrucoes">Clique no jogador mais próximo da bola para chutar | Botão direito arrastar = girar câmera | Scroll = zoom</div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    // ===== VARIÁVEIS GLOBAIS =====
+    let modoJogo = null; // 'maquina' ou 'online'
+    let meuTime = 'azul'; // time do jogador
+    let roomId = null;
+    let jogoAtivo = false;
+    let gameActive = true; // controle de gol
+    let placar = { azul: 0, vermelho: 0 };
+
+    const scoreDisplay = document.getElementById('scoreDisplay');
+    const golMsg = document.getElementById('golMsg');
+    const hud = document.getElementById('hud');
+    const instrucoes = document.getElementById('instrucoes');
+    const menu = document.getElementById('menu');
+
+    // Socket.io
+    const socket = io();
+    socket.on('connect', () => console.log('Conectado ao servidor'));
+
+    // ===== MENU E ONLINE =====
+    function voltarMenu() {
+      document.getElementById('menuPrincipal').style.display = 'block';
+      document.getElementById('painelOnline').style.display = 'none';
+    }
+
+    function mostrarOnline() {
+      document.getElementById('menuPrincipal').style.display = 'none';
+      document.getElementById('painelOnline').style.display = 'block';
+    }
+
+    function iniciarContraMaquina() {
+      modoJogo = 'maquina';
+      meuTime = 'azul';
+      iniciarJogo();
+    }
+
+    function criarSala() {
+      const nome = document.getElementById('inputNome').value || 'Jogador';
+      socket.emit('criarSala', nome);
+    }
+
+    function listarSalas() {
+      socket.emit('listarSalas');
+    }
+
+    function entrarSalaCodigo() {
+      const nome = document.getElementById('inputNome').value || 'Jogador';
+      const codigo = document.getElementById('inputSalaId').value.toUpperCase().trim();
+      if (!codigo) { document.getElementById('msgErro').textContent = 'Digite o código da sala'; return; }
+      socket.emit('entrarSala', { roomId: codigo, nome });
+    }
+
+    // Respostas do servidor
+    socket.on('salaCriada', (data) => {
+      roomId = data.roomId;
+      meuTime = data.time;
+      document.getElementById('salaInfo').innerHTML =
+        `Sala criada! Código: <b>${roomId}</b><br>Aguardando adversário...<br><br>` +
+        `<button class="menu-btn" onclick="confirmarPronto()" style="width:200px">✓ Pronto</button>`;
+    });
+
+    socket.on('salaEntrou', (data) => {
+      roomId = data.roomId;
+      meuTime = data.time;
+      document.getElementById('salaInfo').innerHTML =
+        `Entrou na sala <b>${roomId}</b>!<br>Você é o time <span style="color:${data.time === 'azul' ? '#4488ff' : '#ff4444'}">${data.time.toUpperCase()}</span><br><br>` +
+        `<button class="menu-btn" onclick="confirmarPronto()" style="width:200px">✓ Pronto</button>`;
+    });
+
+    function confirmarPronto() {
+      socket.emit('pronto', roomId);
+      document.getElementById('salaInfo').innerHTML = 'Aguardando ambos jogadores ficarem prontos...';
+    }
+
+    socket.on('iniciarJogo', (data) => {
+      modoJogo = 'online';
+      iniciarJogo(data);
+    });
+
+    socket.on('erroSala', (msg) => {
+      document.getElementById('msgErro').textContent = msg;
+    });
+
+    socket.on('listaSalas', (salas) => {
+      const lista = document.getElementById('listaSalas');
+      if (salas.length === 0) {
+        lista.innerHTML = '<p style="color:#888;margin:10px">Nenhuma sala disponível</p>';
+        return;
+      }
+      lista.innerHTML = salas.map(s =>
+        `<div class="sala-item" onclick="entrarSalaRapido('${s.id}')">
+          Sala <b>${s.id}</b> - ${s.jogadores}/2 jogadores (${s.nomes.join(', ')})
+        </div>`
+      ).join('');
+    });
+
+    function entrarSalaRapido(id) {
+      const nome = document.getElementById('inputNome').value || 'Jogador';
+      socket.emit('entrarSala', { roomId: id, nome });
+    }
+
+    socket.on('jogadorSaiu', () => {
+      alert('Adversário saiu da sala');
+      location.reload();
+    });
+
+    // Sincronização online
+    socket.on('jogadorMoveu', (data) => {
+      if (!jogoAtivo) return;
+      const idx = data.jogadorIdx;
+      if (idx >= 0 && idx < playerButtons.length) {
+        playerButtons[idx].position.x = data.x;
+        playerButtons[idx].position.z = data.z;
+      }
+    });
+
+    socket.on('bolaChutada', (data) => {
+      if (!jogoAtivo) return;
+      bolaVel.x = data.velX;
+      bolaVel.z = data.velZ;
+    });
+
+    socket.on('golAtualizado', (data) => {
+      placar = data.placar;
+      atualizarPlacar();
+    });
+
+    function atualizarPlacar() {
+      document.getElementById('placarAzul').textContent = placar.azul;
+      document.getElementById('placarVermelho').textContent = placar.vermelho;
+    }
+
+    // ===== CENA, CÂMERA, RENDERER =====
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 500);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // ===== CÂMERA 3D COM ROTAÇÃO 360° =====
+    let cameraDist = 32;
+    let cameraAngleH = 0;
+    let cameraAngleV = 0.9;
+    const CAM_MIN_DIST = 12;
+    const CAM_MAX_DIST = 65;
+    const CAM_MIN_V = 0.15;
+    const CAM_MAX_V = 1.5;
+    let cameraTarget = new THREE.Vector3(0, 0, 0);
+
+    function atualizarCamera() {
+      camera.position.x = cameraTarget.x + cameraDist * Math.sin(cameraAngleH) * Math.cos(cameraAngleV);
+      camera.position.y = cameraDist * Math.sin(cameraAngleV);
+      camera.position.z = cameraTarget.z + cameraDist * Math.cos(cameraAngleH) * Math.cos(cameraAngleV);
+      camera.lookAt(cameraTarget);
+    }
+    atualizarCamera();
+
+    // Scroll = zoom
+    renderer.domElement.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      cameraDist += e.deltaY * 0.04;
+      cameraDist = Math.max(CAM_MIN_DIST, Math.min(CAM_MAX_DIST, cameraDist));
+    }, { passive: false });
+
+    // Botão direito + arrastar = girar câmera 360°
+    let cameraRotating = false;
+    let rotateStart = { x: 0, y: 0 };
+
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (e.button === 2) {
+        cameraRotating = true;
+        rotateStart.x = e.clientX;
+        rotateStart.y = e.clientY;
+      }
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (cameraRotating) {
+        const dx = (e.clientX - rotateStart.x) * 0.008;
+        const dy = (e.clientY - rotateStart.y) * 0.005;
+        cameraAngleH -= dx;
+        cameraAngleV += dy;
+        cameraAngleV = Math.max(CAM_MIN_V, Math.min(CAM_MAX_V, cameraAngleV));
+        rotateStart.x = e.clientX;
+        rotateStart.y = e.clientY;
+      }
+    });
+    window.addEventListener('pointerup', (e) => {
+      if (e.button === 2) cameraRotating = false;
+    });
+
+    // ===== ILUMINAÇÃO =====
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const luzDir = new THREE.DirectionalLight(0xffffff, 0.8);
+    luzDir.position.set(10, 20, 10);
+    luzDir.castShadow = true;
+    scene.add(luzDir);
+
+    // ===== CAMPO =====
+    const loader = new THREE.TextureLoader();
+    const campoGeo = new THREE.PlaneGeometry(30, 20);
+    const campoMat = new THREE.MeshStandardMaterial({ color: 0x228B22 });
+    loader.load('/img/campo.fundo.png', (tex) => {
+      campoMat.map = tex;
+      campoMat.needsUpdate = true;
+    });
+    const campo = new THREE.Mesh(campoGeo, campoMat);
+    campo.rotation.x = -Math.PI / 2;
+    campo.receiveShadow = true;
+    scene.add(campo);
+
+    // Grama extra
+    const grama = new THREE.Mesh(
+      new THREE.PlaneGeometry(40, 30),
+      new THREE.MeshStandardMaterial({ color: 0x1a7a1a })
+    );
+    grama.rotation.x = -Math.PI / 2;
+    grama.position.y = -0.01;
+    scene.add(grama);
+
+    // ===== TRAVES =====
+    const traveMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, metalness: 0.6, roughness: 0.3 });
+
+    function criarTrave(posX) {
+      const grupo = new THREE.Group();
+      const larguraGol = 6;
+      const alturaGol = 2.5;
+      const posteGeo = new THREE.CylinderGeometry(0.12, 0.12, alturaGol, 8);
+
+      const p1 = new THREE.Mesh(posteGeo, traveMat);
+      p1.position.set(0, alturaGol / 2, -larguraGol / 2);
+      grupo.add(p1);
+
+      const p2 = new THREE.Mesh(posteGeo, traveMat);
+      p2.position.set(0, alturaGol / 2, larguraGol / 2);
+      grupo.add(p2);
+
+      const travGeo = new THREE.CylinderGeometry(0.12, 0.12, larguraGol, 8);
+      const trav = new THREE.Mesh(travGeo, traveMat);
+      trav.rotation.x = Math.PI / 2;
+      trav.position.set(0, alturaGol, 0);
+      grupo.add(trav);
+
+      // Rede
+      const redeMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+      const rede = new THREE.Mesh(new THREE.PlaneGeometry(larguraGol, alturaGol), redeMat);
+      rede.rotation.y = Math.PI / 2;
+      rede.position.set(1.2 * Math.sign(posX), alturaGol / 2, 0);
+      grupo.add(rede);
+
+      const redeLatGeo = new THREE.PlaneGeometry(1.2, alturaGol);
+      const redeLat1 = new THREE.Mesh(redeLatGeo, redeMat);
+      redeLat1.position.set(0.6 * Math.sign(posX), alturaGol / 2, -larguraGol / 2);
+      grupo.add(redeLat1);
+      const redeLat2 = new THREE.Mesh(redeLatGeo, redeMat);
+      redeLat2.position.set(0.6 * Math.sign(posX), alturaGol / 2, larguraGol / 2);
+      grupo.add(redeLat2);
+
+      grupo.position.x = posX;
+      scene.add(grupo);
+    }
+    criarTrave(-15);
+    criarTrave(15);
+
+    // ===== BOLA =====
+    const bolaGeo = new THREE.SphereGeometry(0.5, 16, 16);
+    const bolaMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const bola = new THREE.Mesh(bolaGeo, bolaMat);
+    bola.position.set(0, 0.5, 0);
+    bola.castShadow = true;
+    scene.add(bola);
+
+    let bolaVel = new THREE.Vector3(0, 0, 0);
+    let bolaCooldown = 0;
+
+    // ===== JOGADORES =====
+    const playerButtons = [];
+    const jogadorTextura = loader.load('/img/jogador1.png');
+
+    function criarJogador(x, z, cor) {
+      const grupo = new THREE.Group();
+
+      const corpoGeo = new THREE.CylinderGeometry(0.85, 0.85, 0.5, 20);
+      const corpoMat = new THREE.MeshStandardMaterial({ color: cor, metalness: 0.2, roughness: 0.5 });
+      const corpo = new THREE.Mesh(corpoGeo, corpoMat);
+      corpo.castShadow = true;
+      grupo.add(corpo);
+
+      const topoGeo = new THREE.CylinderGeometry(0.75, 0.75, 0.05, 20);
+      const topoMat = new THREE.MeshStandardMaterial({ map: jogadorTextura, color: 0xffffff });
+      const topo = new THREE.Mesh(topoGeo, topoMat);
+      topo.position.y = 0.27;
+      grupo.add(topo);
+
+      const bordaGeo = new THREE.TorusGeometry(0.85, 0.06, 8, 20);
+      const bordaMat2 = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.7 });
+      const borda = new THREE.Mesh(bordaGeo, bordaMat2);
+      borda.rotation.x = Math.PI / 2;
+      borda.position.y = 0.25;
+      grupo.add(borda);
+
+      grupo.position.set(x, 0.25, z);
+      grupo.userData.posInicial = { x, z }; // guardar posição inicial
+      grupo.userData.time = cor === 0x0055cc ? 'azul' : 'vermelho';
+      scene.add(grupo);
+      playerButtons.push(grupo);
+      return grupo;
+    }
+
+    // ===== GOLEIROS =====
+    const goleiros = [];
+
+    function criarGoleiro(x, cor) {
+      const grupo = new THREE.Group();
+      const corpoGeo = new THREE.CylinderGeometry(1.0, 1.0, 0.6, 20);
+      const corpoMat = new THREE.MeshStandardMaterial({ color: cor, metalness: 0.3, roughness: 0.4 });
+      const corpo = new THREE.Mesh(corpoGeo, corpoMat);
+      corpo.castShadow = true;
+      grupo.add(corpo);
+
+      const topoGeo = new THREE.CylinderGeometry(0.9, 0.9, 0.05, 20);
+      const topoMat = new THREE.MeshStandardMaterial({ map: jogadorTextura, color: 0xffffff });
+      const topo = new THREE.Mesh(topoGeo, topoMat);
+      topo.position.y = 0.32;
+      grupo.add(topo);
+
+      const bordaGeo = new THREE.TorusGeometry(1.0, 0.08, 8, 20);
+      const bordaMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8 });
+      const borda = new THREE.Mesh(bordaGeo, bordaMat);
+      borda.rotation.x = Math.PI / 2;
+      borda.position.y = 0.3;
+      grupo.add(borda);
+
+      grupo.position.set(x, 0.3, 0);
+      grupo.userData.posInicial = { x, z: 0 };
+      grupo.userData.time = x < 0 ? 'azul' : 'vermelho';
+      scene.add(grupo);
+      goleiros.push(grupo);
+      playerButtons.push(grupo);
+      return grupo;
+    }
+
+    // ===== POSIÇÕES INICIAIS (FORMAÇÃO ESPALHADA PELO CAMPO) =====
+    function criarTimes() {
+      // Limpar jogadores existentes
+      while (playerButtons.length > 0) {
+        const j = playerButtons.pop();
+        scene.remove(j);
+      }
+      while (goleiros.length > 0) goleiros.pop();
+
+      // Time azul (ataca para esquerda, gol em x=-15)
+      criarJogador(-4, -5, 0x0055cc);   // lateral direito
+      criarJogador(-4, 5, 0x0055cc);    // lateral esquerdo
+      criarJogador(-7, -2, 0x0055cc);   // meia direita
+      criarJogador(-7, 2, 0x0055cc);    // meia esquerda
+      criarJogador(-10, 0, 0x0055cc);   // atacante central
+
+      // Time vermelho (ataca para direita, gol em x=15)
+      criarJogador(4, -5, 0xcc2200);    // lateral direito
+      criarJogador(4, 5, 0xcc2200);     // lateral esquerdo
+      criarJogador(7, -2, 0xcc2200);    // meia direita
+      criarJogador(7, 2, 0xcc2200);     // meia esquerda
+      criarJogador(10, 0, 0xcc2200);    // atacante central
+
+      // Goleiros
+      criarGoleiro(-13.5, 0x00aa00);    // goleiro azul (esquerda)
+      criarGoleiro(13.5, 0xffaa00);     // goleiro vermelho (direita)
+    }
+
+    // ===== SETA DE DIREÇÃO =====
+    let setaChute = null;
+
+    function atualizarSeta() {
+      if (setaChute) { scene.remove(setaChute); setaChute = null; }
+      if (!arrastando || !jogadorSelecionado) return;
+
+      const dist = jogadorSelecionado.position.distanceTo(bola.position);
+      if (dist < 4 && dist > 0.1) {
+        const dir = new THREE.Vector3().subVectors(bola.position, jogadorSelecionado.position).normalize();
+        dir.y = 0;
+        const origem = bola.position.clone();
+        origem.y = 0.6;
+        setaChute = new THREE.ArrowHelper(dir, origem, Math.min(dist * 1.5, 5), 0xffff00, 1, 0.5);
+        scene.add(setaChute);
+      }
+    }
+
+    // ===== INTERAÇÃO - SELECIONA JOGADOR MAIS PRÓXIMO DA BOLA =====
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let jogadorSelecionado = null;
+    let arrastando = false;
+
+    function getJogadoresDoMeuTime() {
+      // Retorna apenas jogadores (não goleiros) do time do jogador
+      return playerButtons.filter(j => j.userData.time === meuTime && !goleiros.includes(j));
+    }
+
+    function getJogadorMaisProximoBola(time) {
+      // Retorna o jogador do time mais próximo da bola
+      const jogadores = playerButtons.filter(j => j.userData.time === time && !goleiros.includes(j));
+      let maisProximo = null;
+      let menorDist = Infinity;
+      for (const j of jogadores) {
+        const d = j.position.distanceTo(bola.position);
+        if (d < menorDist) {
+          menorDist = d;
+          maisProximo = j;
+        }
+      }
+      return maisProximo;
+    }
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || cameraRotating || !jogoAtivo) return;
+      e.preventDefault();
+
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      // Primeiro: tentar clicar diretamente em um jogador do meu time
+      const intersects = raycaster.intersectObjects(playerButtons, true);
+      let jogadorClicado = null;
+
+      if (intersects.length > 0) {
+        let obj = intersects[0].object;
+        while (obj.parent && !playerButtons.includes(obj)) { obj = obj.parent; }
+        if (playerButtons.includes(obj) && obj.userData.time === meuTime && !goleiros.includes(obj)) {
+          jogadorClicado = obj;
+        }
+      }
+
+      // Se não clicou em ninguém, selecionar o mais próximo da bola
+      if (!jogadorClicado) {
+        jogadorClicado = getJogadorMaisProximoBola(meuTime);
+      }
+
+      if (jogadorClicado) {
+        jogadorSelecionado = jogadorClicado;
+        arrastando = true;
+        renderer.domElement.setPointerCapture(e.pointerId);
+
+        // Destacar jogador selecionado
+        destacarJogador(jogadorSelecionado);
+      }
+    });
+
+    function destacarJogador(jogador) {
+      // Resetar destaque de todos
+      for (const j of playerButtons) {
+        if (!goleiros.includes(j)) {
+          j.children[0].emissive = new THREE.Color(0x000000);
+        }
+      }
+      // Destacar o selecionado
+      jogador.children[0].emissive = new THREE.Color(0x444400);
+    }
+
+    renderer.domElement.addEventListener('pointermove', (e) => {
+      if (!arrastando || !jogadorSelecionado) return;
+      e.preventDefault();
+
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      const plano = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const ponto = new THREE.Vector3();
+      raycaster.ray.intersectPlane(plano, ponto);
+      if (ponto) {
+        jogadorSelecionado.position.x = Math.max(-14, Math.min(14, ponto.x));
+        jogadorSelecionado.position.z = Math.max(-9, Math.min(9, ponto.z));
+      }
+      atualizarSeta();
+    });
+
+    renderer.domElement.addEventListener('pointerup', (e) => {
+      if (e.button !== 0) return;
+      if (arrastando && jogadorSelecionado) {
+        const dist = jogadorSelecionado.position.distanceTo(bola.position);
+        if (dist < 3) {
+          // Chutar a bola
+          const dir = new THREE.Vector3().subVectors(bola.position, jogadorSelecionado.position).normalize();
+          const forcaChute = 0.35 - (dist / 3) * 0.15;
+          bolaVel.add(dir.multiplyScalar(forcaChute));
+          tocarSomChute();
+
+          // Sincronizar online
+          if (modoJogo === 'online') {
+            socket.emit('chuteBola', { roomId, velX: bolaVel.x, velZ: bolaVel.z });
+          }
+        }
+        // Resetar destaque
+        jogadorSelecionado.children[0].emissive = new THREE.Color(0x000000);
+      }
+      arrastando = false;
+      jogadorSelecionado = null;
+      if (setaChute) { scene.remove(setaChute); setaChute = null; }
+    });
+
+    // ===== SONS =====
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function tocarSom(freq, duracao, tipo = 'sine') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = tipo;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duracao);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duracao);
+    }
+
+    function tocarSomChute() { tocarSom(300, 0.15, 'square'); }
+    function tocarApito() { tocarSom(800, 0.5, 'sine'); }
+    function tocarGol() {
+      tocarSom(523, 0.2, 'sine');
+      setTimeout(() => tocarSom(659, 0.2, 'sine'), 200);
+      setTimeout(() => tocarSom(784, 0.4, 'sine'), 400);
+    }
+    function tocarTorcida() {
+      for (let i = 0; i < 5; i++) {
+        setTimeout(() => tocarSom(200 + Math.random() * 300, 0.3, 'sawtooth'), i * 100);
+      }
+    }
+
+    // ===== IA DO TIME ADVERSÁRIO =====
+    let iaTimer = 0;
+    let iaJogadorAtivo = null; // jogador que a IA está controlando atualmente
+
+    function atualizarIA() {
+      if (modoJogo !== 'maquina') return; // só funciona contra máquina
+
+      iaTimer++;
+      const timeIA = meuTime === 'azul' ? 'vermelho' : 'azul';
+      const jogadoresIA = playerButtons.filter(j => j.userData.time === timeIA && !goleiros.includes(j));
+
+      // A cada 60 frames (~1s), trocar o jogador ativo da IA
+      if (iaTimer % 60 === 0 || !iaJogadorAtivo || !jogadoresIA.includes(iaJogadorAtivo)) {
+        // Escolher o jogador mais próximo da bola
+        let maisProximo = null;
+        let menorDist = Infinity;
+        for (const j of jogadoresIA) {
+          const d = j.position.distanceTo(bola.position);
+          if (d < menorDist) { menorDist = d; maisProximo = j; }
+        }
+        iaJogadorAtivo = maisProximo;
+      }
+
+      if (!iaJogadorAtivo) return;
+
+      // Mover o jogador ativo em direção à bola
+      const dx = bola.position.x - iaJogadorAtivo.position.x;
+      const dz = bola.position.z - iaJogadorAtivo.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+
+      if (dist > 0.5) {
+        const velocidade = 0.04; // velocidade de movimento da IA (mais lento)
+        iaJogadorAtivo.position.x += (dx / dist) * velocidade;
+        iaJogadorAtivo.position.z += (dz / dist) * velocidade;
+        // Limitar dentro do campo
+        iaJogadorAtivo.position.x = Math.max(-14, Math.min(14, iaJogadorAtivo.position.x));
+        iaJogadorAtivo.position.z = Math.max(-9, Math.min(9, iaJogadorAtivo.position.z));
+      }
+
+      // Chutar quando perto da bola
+      if (dist < 2.0 && bolaCooldown <= 0) {
+        // Direção do chute: em direção ao gol adversário (com aleatoriedade)
+        const golAlvoX = timeIA === 'vermelho' ? -15 : 15; // gol que a IA ataca
+        const erroZ = (Math.random() - 0.5) * 6; // erro na direção Z
+        const dirChute = new THREE.Vector3(golAlvoX - bola.position.x, 0, -bola.position.z * 0.2 + erroZ).normalize();
+        const forcaIA = 0.18 + Math.random() * 0.08; // força menor
+        bolaVel.add(dirChute.multiplyScalar(forcaIA));
+        tocarSomChute();
+        bolaCooldown = 40; // cooldown maior (40 frames ~660ms)
+      }
+
+      // Outros jogadores da IA voltam devagar para posição inicial
+      for (const j of jogadoresIA) {
+        if (j === iaJogadorAtivo) continue;
+        const posIni = j.userData.posInicial;
+        j.position.x += (posIni.x - j.position.x) * 0.01;
+        j.position.z += (posIni.z - j.position.z) * 0.01;
+      }
+    }
+
+    // ===== INICIAR JOGO =====
+    function iniciarJogo(dataOnline) {
+      menu.style.display = 'none';
+      hud.style.display = 'block';
+      instrucoes.style.display = 'block';
+      jogoAtivo = true;
+
+      criarTimes();
+      placar = { azul: 0, vermelho: 0 };
+      atualizarPlacar();
+
+      if (dataOnline) {
+        placar = dataOnline.placar || { azul: 0, vermelho: 0 };
+        atualizarPlacar();
+      }
+
+      // Resetar bola
+      bola.position.set(0, 0.5, 0);
+      bolaVel.set(0, 0, 0);
+
+      console.log('Jogo iniciado! Modo:', modoJogo, 'Time:', meuTime);
+    }
+
+    // ===== RESIZE =====
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ===== LOOP DE ANIMAÇÃO =====
+    function animate() {
+      requestAnimationFrame(animate);
+      atualizarCamera();
+
+      if (!jogoAtivo) {
+        renderer.render(scene, camera);
+        return;
+      }
+
+      // Física da bola
+      bola.position.add(bolaVel);
+      bolaVel.multiplyScalar(0.98);
+      bola.rotation.x += bolaVel.z * 0.5;
+      bola.rotation.z -= bolaVel.x * 0.5;
+
+      // Cooldown
+      if (bolaCooldown > 0) bolaCooldown--;
+
+      // Colisão da bola com jogadores
+      for (let i = 0; i < playerButtons.length; i++) {
+        const jogador = playerButtons[i];
+        const dist = bola.position.distanceTo(jogador.position);
+        if (dist < 1.5 && dist > 0.01 && bolaCooldown <= 0) {
+          // Não empurrar se é o jogador que acabou de chutar
+          if (jogador === jogadorSelecionado) continue;
+
+          const direction = new THREE.Vector3().subVectors(bola.position, jogador.position).normalize();
+          bolaVel.add(direction.multiplyScalar(0.2));
+          bolaCooldown = 15;
+
+          // Efeito visual de recuo
+          jogador.position.y = 0.15;
+          setTimeout(() => { jogador.position.y = 0.25; }, 150);
+        }
+      }
+
+      // IA DOS GOLEIROS - se posicionam para defender
+      for (let g = 0; g < goleiros.length; g++) {
+        const gol = goleiros[g];
+        const golX = gol.position.x;
+        const distBolaGol = Math.abs(bola.position.x - golX);
+
+        // Verificar se a bola está vindo em direção a este gol
+        const bolaIndoParaGol = (golX < 0 && bolaVel.x < -0.02) || (golX > 0 && bolaVel.x > 0.02);
+
+        // Goleiro se move mais rápido quando bola está perto E vindo em direção ao gol
+        let velocidade;
+        if (bolaIndoParaGol && distBolaGol < 10) {
+          velocidade = 0.2; // muito rápido quando bola vem em direção
+        } else if (distBolaGol < 8) {
+          velocidade = 0.1;
+        } else {
+          velocidade = 0.03;
+        }
+
+        // Prever onde a bola vai chegar (posição Z futura)
+        const tempoChegada = distBolaGol / (Math.abs(bolaVel.x) + 0.01);
+        const zFuturo = bola.position.z + bolaVel.z * Math.min(tempoChegada, 30);
+        const alvoZ = Math.max(-2.8, Math.min(2.8, zFuturo));
+
+        const diffZ = alvoZ - gol.position.z;
+        gol.position.z += diffZ * velocidade;
+      }
+
+      // IA do time adversário (contra máquina)
+      atualizarIA();
+
+      // DETECÇÃO DE GOL
+      // Gol da esquerda (x=-15)
+      if (bola.position.x < -14.5 && Math.abs(bola.position.z) < 3) {
+        if (gameActive) {
+          gameActive = false;
+          tocarGol();
+          tocarTorcida();
+          golMsg.style.display = 'block';
+          // Quem marcou? Se bola entrou no gol esquerdo, time vermelho marcou
+          placar.vermelho++;
+          atualizarPlacar();
+          if (modoJogo === 'online') socket.emit('golMarcado', { roomId, time: 'vermelho' });
+
+          setTimeout(() => {
+            golMsg.style.display = 'none';
+            gameActive = true;
+            resetarPosicoes();
+          }, 2000);
+        }
+        bola.position.set(0, 0.5, 0);
+        bolaVel.set(0, 0, 0);
+      }
+
+      // Gol da direita (x=15)
+      if (bola.position.x > 14.5 && Math.abs(bola.position.z) < 3) {
+        if (gameActive) {
+          gameActive = false;
+          tocarGol();
+          tocarTorcida();
+          golMsg.style.display = 'block';
+          placar.azul++;
+          atualizarPlacar();
+          if (modoJogo === 'online') socket.emit('golMarcado', { roomId, time: 'azul' });
+
+          setTimeout(() => {
+            golMsg.style.display = 'none';
+            gameActive = true;
+            resetarPosicoes();
+          }, 2000);
+        }
+        bola.position.set(0, 0.5, 0);
+        bolaVel.set(0, 0, 0);
+      }
+
+      // Fora de campo
+      if (bola.position.z > 9.5 || bola.position.z < -9.5) {
+        tocarApito();
+        bola.position.set(0, 0.5, 0);
+        bolaVel.set(0, 0, 0);
+      }
+
+      // Limites da bola
+      if (bola.position.x > 14.5) { bola.position.x = 14.5; bolaVel.x *= -0.5; }
+      if (bola.position.x < -14.5) { bola.position.x = -14.5; bolaVel.x *= -0.5; }
+      if (bola.position.z > 9.5) { bola.position.z = 9.5; bolaVel.z *= -0.5; }
+      if (bola.position.z < -9.5) { bola.position.z = -9.5; bolaVel.z *= -0.5; }
+
+      bola.position.y = 0.5;
+      renderer.render(scene, camera);
+    }
+
+    // Resetar posições após gol
+    function resetarPosicoes() {
+      for (const j of playerButtons) {
+        if (j.userData.posInicial) {
+          j.position.x = j.userData.posInicial.x;
+          j.position.z = j.userData.posInicial.z;
+        }
+      }
+      bola.position.set(0, 0.5, 0);
+      bolaVel.set(0, 0, 0);
+      bolaCooldown = 30;
+    }
+
+    animate();
+    console.log('Jogo de Botões 3D carregado!');
+  </script>
+</body>
+</html>
