@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: jogo-botoes-3d
+    runtime: node
+    buildCommand: npm install --legacy-peer-deps && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
