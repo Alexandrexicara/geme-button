@@ -9,7 +9,7 @@ const TIMES = {
 };
 
 const HUD: React.FC = () => {
-  const { gameState, placar, setMeuTime, meuTime } = useGameStore();
+  const { gameState, placar, setMeuTime, meuTime, reset } = useGameStore();
   const [selecionado, setSelecionado] = useState<TimeId | null>(null);
   const [turnoAtual, setTurnoAtual]   = useState<TimeId | null>(null);
   const [faseJogada, setFaseJogada]   = useState<string>('IDLE');
@@ -106,6 +106,23 @@ const HUD: React.FC = () => {
             <span style={{ color:'#888', fontSize:12 }}>Botão direito = girar câmera | Scroll = zoom</span>
           </p>
         </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'VICTORY') {
+    const vencedor = placar[meuTime] >= 3 ? TIMES[meuTime] : TIMES[meuTime === 'cruzeiro' ? 'atletico' : 'cruzeiro'];
+    return (
+      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center pointer-events-auto"
+        style={{ background: 'radial-gradient(circle,rgba(0,45,20,.96),rgba(0,0,0,.98))' }}>
+        <div style={{ color: '#ffd700', fontSize: 42, fontWeight: 900 }}>🏆 FIM DE JOGO</div>
+        <div style={{ color: '#fff', fontSize: 28, fontWeight: 800, marginTop: 14 }}>{vencedor.nome} venceu!</div>
+        <div style={{ color: '#ffd700', fontSize: 44, fontWeight: 900, margin: '18px 0 28px' }}>
+          {placar[meuTime]} × {placar[meuTime === 'cruzeiro' ? 'atletico' : 'cruzeiro']}
+        </div>
+        <button onClick={reset} style={{ padding: '14px 34px', borderRadius: 12, border: '2px solid #ffd700', background: 'rgba(255,215,0,.15)', color: '#ffd700', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>
+          Jogar novamente
+        </button>
       </div>
     );
   }

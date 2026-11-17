@@ -35,6 +35,7 @@ const GameCanvas: React.FC = () => {
     rotStart: { x: 0, y: 0 },
     botaoSel:     null as THREE.Group | null,
     dirSeta:      new THREE.Vector3(1, 0, 0),
+    potencia:     1 as number,
     botaoMovendo: null as THREE.Group | null,
     botaoVelVec:  new THREE.Vector3(),
     redistribuindo:  false,
@@ -43,6 +44,8 @@ const GameCanvas: React.FC = () => {
 
   const bolaRef      = useRef<THREE.Mesh | null>(null);
   const bolaVel      = useRef(new THREE.Vector3());
+  const lastFrameRef  = useRef<number | null>(null);
+  const executarJogadaIARef = useRef<() => void>(() => {});
   const jogadoresRef = useRef<THREE.Group[]>([]);
   const goleirosRef  = useRef<THREE.Group[]>([]);
   const texRef       = useRef<Record<TimeId, THREE.Texture | null>>({ cruzeiro: null, atletico: null });
@@ -111,12 +114,14 @@ const GameCanvas: React.FC = () => {
 
   const tickConfetes = useCallback(() => {
     if (!confeteAtivo.current) return;
+    /* eslint-disable react-hooks/immutability -- Three.js objects live outside React state. */
     for (const c of confetesRef.current) {
       c.position.y += c.userData.vy;
       c.position.x += c.userData.vx;
       c.rotation.z += c.userData.sp;
       if (c.position.y < -1) c.position.y = 10;
     }
+    /* eslint-enable react-hooks/immutability */
   }, []);
 
   // ─── Câmera ──────────────────────────────────────────────────
@@ -203,7 +208,8 @@ const GameCanvas: React.FC = () => {
     const botao = gs.current.botaoSel;
     if (!botao) return;
     const orig = botao.position.clone(); orig.y = 0.7;
-    setaRef.current = new THREE.ArrowHelper(dir, orig, 5, 0xffff00, 0.9, 0.55);
+    const length = 2.5 + gs.current.potencia * 3.5;
+    setaRef.current = new THREE.ArrowHelper(dir, orig, length, 0xffff00, 0.9, 0.55);
     scene.add(setaRef.current);
   }, []);
 
@@ -232,7 +238,7 @@ const GameCanvas: React.FC = () => {
     bolaRef.current!.position.set(0, 0.5, 0);
     bolaVel.current.set(0, 0, 0);
     const s = gs.current;
-    s.fase = 'IDLE'; s.botaoSel = null; s.botaoMovendo = null;
+    s.fase = 'IDLE'; s.botaoSel = null; s.botaoMovendo = null; s.potencia = 1;
     s.botaoVelVec.set(0, 0, 0);
     s.redistribuindo = false; s.jogadaEncerrada = false;
     removerSeta();
@@ -251,11 +257,25 @@ const GameCanvas: React.FC = () => {
       dispatchGol(time);
       bola.position.set(0, 0.5, 0);
       bolaVel.current.set(0, 0, 0);
-      setTimeout(() => { s.gameActive = true; resetarPosicoes(); }, 2800);
+      const novoPlacar = useGameStore.getState().placar[time] + 1;
+      if (novoPlacar >= 3) {
+        setGameState('VICTORY');
+        return;
+      }
+      setTimeout(() => {
+        resetarPosicoes();
+        // Após um gol, a saída é do adversário de quem marcou.
+        s.turno = time === s.meuTime ? s.adversario : s.meuTime;
+        s.gameActive = true;
+        if (s.turno === s.adversario) {
+          s.fase = 'IA_PENSANDO';
+          setTimeout(() => executarJogadaIARef.current(), 700);
+        }
+      }, 2800);
     };
     if (bola.position.x < -14.5 && Math.abs(bola.position.z) < 3.1) marcarGol(s.adversario);
     if (bola.position.x >  14.5 && Math.abs(bola.position.z) < 3.1) marcarGol(s.meuTime);
-  }, [removerSeta, resetarPosicoes, somGol, somTorcida, lancarConfetes]);
+  }, [removerSeta, resetarPosicoes, somGol, somTorcida, lancarConfetes, setGameState]);
 
   // ─── Redistribuir jogadores ──────────────────────────────────
   // Define destinos táticos em userData.destino — o loop move frame a frame
@@ -322,9 +342,9 @@ const GameCanvas: React.FC = () => {
     removerSeta();
     if (s.turno === s.adversario) {
       s.fase = 'IA_PENSANDO';
-      setTimeout(() => executarJogadaIA(), 800 + Math.random() * 600);
+      setTimeout(() => executarJogadaIARef.current(), 800 + Math.random() * 600);
     }
-  }, [removerSeta]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [removerSeta]);
 
   // ─── IA ──────────────────────────────────────────────────────
   const executarJogadaIA = useCallback(() => {
@@ -368,6 +388,10 @@ const GameCanvas: React.FC = () => {
     s.fase = 'DESLIZANDO';
     somChute();
   }, [avancarTurno, somChute]);
+
+  useEffect(() => {
+    executarJogadaIARef.current = executarJogadaIA;
+  }, [executarJogadaIA]);
 
   // ─── Inicializar cena Three.js ───────────────────────────────
   const initThree = useCallback(() => {
@@ -494,8 +518,11 @@ const GameCanvas: React.FC = () => {
 
   // ─── Loop principal ──────────────────────────────────────────
   const startLoop = useCallback(() => {
-    const loop = () => {
+    const loop = (now: number) => {
       frameRef.current = requestAnimationFrame(loop);
+      const previous = lastFrameRef.current ?? now;
+      const dt = Math.min(2, Math.max(0.5, (now - previous) / 16.6667));
+      lastFrameRef.current = now;
       atualizarCamera();
       const scene = sceneRef.current!;
       const s = gs.current;
@@ -510,37 +537,55 @@ const GameCanvas: React.FC = () => {
         const bot = s.botaoMovendo;
         const vel = s.botaoVelVec;
 
-        bot.position.x += vel.x;
-        bot.position.z += vel.z;
+        bot.position.x += vel.x * dt;
+        bot.position.z += vel.z * dt;
         const spd = vel.length();
         bot.position.y = (bot.userData.ehGoleiro ? 0.29 : 0.24) + Math.sin(spd*12)*0.04;
 
-        // Colisão com bola
+        // Colisão botão-bola: separa os objetos antes de aplicar o impulso.
         const rBot = bot.userData.ehGoleiro ? 1.0 : 0.85;
-        const db = bot.position.distanceTo(bola.position);
+        const normalBola = new THREE.Vector3(
+          bola.position.x - bot.position.x, 0, bola.position.z - bot.position.z,
+        );
+        const db = normalBola.length();
         if (db < rBot + 0.5) {
-          const dir = new THREE.Vector3().subVectors(bola.position, bot.position).normalize();
-          dir.y = 0;
-          bv.set(dir.x * spd * 2.0, 0, dir.z * spd * 2.0);
-          somChute();
+          if (db < 0.001) normalBola.set(1, 0, 0);
+          else normalBola.normalize();
+          const sobreposicao = rBot + 0.5 - db;
+          bola.position.x += normalBola.x * sobreposicao;
+          bola.position.z += normalBola.z * sobreposicao;
+          const aproximacao = vel.x * normalBola.x + vel.z * normalBola.z;
+          if (aproximacao > 0) {
+            const impulso = Math.max(spd * 2.0, 0.08);
+            bv.set(normalBola.x * impulso, 0, normalBola.z * impulso);
+            somChute();
+          }
         }
 
         // Colisão com outros botões
         for (const outro of jogadoresRef.current) {
           if (outro === bot) continue;
           const rO = outro.userData.ehGoleiro ? 1.0 : 0.85;
-          const d  = bot.position.distanceTo(outro.position);
+          const normal = new THREE.Vector3(
+            outro.position.x - bot.position.x, 0, outro.position.z - bot.position.z,
+          );
+          const d = normal.length();
           if (d < rBot + rO) {
-            const dir2 = new THREE.Vector3().subVectors(outro.position, bot.position).normalize();
-            dir2.y = 0;
+            if (d < 0.001) normal.set(1, 0, 0);
+            else normal.normalize();
             const sep = (rBot + rO - d) * 0.5;
-            outro.position.x += dir2.x * sep;
-            outro.position.z += dir2.z * sep;
-            outro.userData.vel.set(dir2.x * spd * 0.7, 0, dir2.z * spd * 0.7);
+            outro.position.x += normal.x * sep;
+            outro.position.z += normal.z * sep;
+            bot.position.x -= normal.x * sep;
+            bot.position.z -= normal.z * sep;
+            const impulso = spd * 0.7;
+            outro.userData.vel.set(normal.x * impulso, 0, normal.z * impulso);
+            vel.x -= normal.x * impulso * 0.35;
+            vel.z -= normal.z * impulso * 0.35;
           }
         }
 
-        vel.multiplyScalar(ATRITO);
+        vel.multiplyScalar(Math.pow(ATRITO, dt));
         if (bot.position.x >  14.2) { bot.position.x =  14.2; vel.x *= -0.5; }
         if (bot.position.x < -14.2) { bot.position.x = -14.2; vel.x *= -0.5; }
         if (bot.position.z >  9.2)  { bot.position.z =  9.2;  vel.z *= -0.5; }
@@ -558,42 +603,18 @@ const GameCanvas: React.FC = () => {
         if (j === s.botaoMovendo) continue;
         const v = j.userData.vel as THREE.Vector3;
         if (v.length() < MIN_VEL) { v.set(0,0,0); continue; }
-        j.position.x += v.x; j.position.z += v.z;
-        v.multiplyScalar(ATRITO);
+        j.position.x += v.x * dt; j.position.z += v.z * dt;
+        v.multiplyScalar(Math.pow(ATRITO, dt));
         if (j.position.x >  14.2) { j.position.x =  14.2; v.x *= -0.5; }
         if (j.position.x < -14.2) { j.position.x = -14.2; v.x *= -0.5; }
         if (j.position.z >  9.2)  { j.position.z =  9.2;  v.z *= -0.5; }
         if (j.position.z < -9.2)  { j.position.z = -9.2;  v.z *= -0.5; }
       }
 
-      // ── 3. Redistribuição tática ─────────────────────────────
-      if (s.redistribuindo) {
-        let movendo = false;
-        const SPD = 0.09;
-        for (const j of jogadoresRef.current) {
-          if (!j.userData.destino || j.userData.ehGoleiro) continue;
-          const { x: tx, z: tz } = j.userData.destino;
-          const dx = tx - j.position.x;
-          const dz = tz - j.position.z;
-          const dist = Math.sqrt(dx*dx + dz*dz);
-          if (dist < 0.12) {
-            j.position.x = tx; j.position.z = tz; j.userData.destino = null;
-          } else {
-            j.position.x += (dx/dist) * Math.min(dist, SPD);
-            j.position.z += (dz/dist) * Math.min(dist, SPD);
-            movendo = true;
-          }
-        }
-        if (!movendo) {
-          s.redistribuindo = false;
-          if (s.jogadaEncerrada) { s.jogadaEncerrada = false; avancarTurno(); }
-        }
-      }
-
-      // ── 4. Bola ──────────────────────────────────────────────
-      bola.position.x += bv.x; bola.position.z += bv.z;
-      bola.rotation.x += bv.z*0.6; bola.rotation.z -= bv.x*0.6;
-      bv.multiplyScalar(BOLA_ATRITO);
+      // ── 3. Bola ──────────────────────────────────────────────
+      bola.position.x += bv.x * dt; bola.position.z += bv.z * dt;
+      bola.rotation.x += bv.z * 0.6 * dt; bola.rotation.z -= bv.x * 0.6 * dt;
+      bv.multiplyScalar(Math.pow(BOLA_ATRITO, dt));
       if (bv.length() < MIN_VEL*0.4) bv.set(0,0,0);
       if (bola.position.z >  9.5) { bola.position.z =  9.5; bv.z *= -0.75; }
       if (bola.position.z < -9.5) { bola.position.z = -9.5; bv.z *= -0.75; }
@@ -601,7 +622,7 @@ const GameCanvas: React.FC = () => {
       if (bola.position.x < -14.5 && Math.abs(bola.position.z) >= 3.1) { bola.position.x = -14.5; bv.x *= -0.65; }
       bola.position.y = 0.5;
 
-      // ── 5. Goleiros ──────────────────────────────────────────
+      // ── 4. Goleiros ──────────────────────────────────────────
       for (const gol of goleirosRef.current) {
         const gx = gol.position.x;
         if (bv.length() > 0.02) {
@@ -623,33 +644,35 @@ const GameCanvas: React.FC = () => {
         }
       }
 
-      // ── 6. Fim de jogada ─────────────────────────────────────
+      // ── 5. Fim de jogada ─────────────────────────────────────
       if (s.fase === 'DESLIZANDO' && !s.botaoMovendo && !s.jogadaEncerrada) {
         const parado = bv.length() < MIN_VEL &&
           jogadoresRef.current.every(j => (j.userData.vel as THREE.Vector3).length() < MIN_VEL);
         if (parado) {
           s.jogadaEncerrada = true;
-          redistribuirJogadores();
-          if (!s.redistribuindo) avancarTurno();
+          // As posições obtidas na jogada permanecem no campo.
+          // Só trocamos o turno quando toda a física terminou.
+          s.jogadaEncerrada = false;
+          avancarTurno();
         }
       }
 
-      // ── 7. Seta de mira ──────────────────────────────────────
+      // ── 6. Seta de mira ──────────────────────────────────────
       if (setaRef.current && s.botaoSel) {
         setaRef.current.position.copy(s.botaoSel.position);
         setaRef.current.position.y = 0.7;
       }
 
-      // ── 8. Gol ───────────────────────────────────────────────
+      // ── 7. Gol ───────────────────────────────────────────────
       verificarGol(addGol);
 
-      // ── 9. Confetes ──────────────────────────────────────────
+      // ── 8. Confetes ──────────────────────────────────────────
       tickConfetes();
 
       rendererRef.current!.render(scene, cameraRef.current!);
     };
-    loop();
-  }, [atualizarCamera, verificarGol, addGol, avancarTurno, tickConfetes, somChute, redistribuirJogadores]);
+    frameRef.current = requestAnimationFrame(loop);
+  }, [atualizarCamera, verificarGol, addGol, avancarTurno, tickConfetes, somChute]);
 
   // ─── Iniciar jogo ────────────────────────────────────────────
   const iniciarJogo = useCallback((time: TimeId) => {
@@ -671,6 +694,7 @@ const GameCanvas: React.FC = () => {
   useEffect(() => {
     initThree();
     startLoop();
+    const mount = mountRef.current;
     const onResize = () => {
       if (!cameraRef.current || !rendererRef.current) return;
       cameraRef.current.aspect = window.innerWidth / window.innerHeight;
@@ -688,8 +712,8 @@ const GameCanvas: React.FC = () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('wheel', onWheel);
       rendererRef.current?.dispose();
-      if (mountRef.current && rendererRef.current)
-        mountRef.current.removeChild(rendererRef.current.domElement);
+      if (mount && rendererRef.current && mount.contains(rendererRef.current.domElement))
+        mount.removeChild(rendererRef.current.domElement);
     };
   }, [initThree, startLoop]);
 
@@ -740,8 +764,8 @@ const GameCanvas: React.FC = () => {
         const dir = s.dirSeta.clone(); dir.y = 0;
         if (dir.length() < 0.01) dir.set(1,0,0);
         s.botaoMovendo = s.botaoSel;
-        s.botaoVelVec.copy(dir).multiplyScalar(BOTAO_VEL);
-        s.botaoSel = null; s.fase = 'DESLIZANDO';
+        s.botaoVelVec.copy(dir).multiplyScalar(BOTAO_VEL * s.potencia);
+        s.botaoSel = null; s.fase = 'DESLIZANDO'; s.potencia = 1;
         removerSeta(); somConfirma();
         jogadoresRef.current.forEach(j => {
           if (j.children[0]) (j.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>).material.emissive?.setHex(0x000000);
@@ -759,9 +783,16 @@ const GameCanvas: React.FC = () => {
       if (s.fase === 'MIRA' && s.botaoSel) {
         const pt = mouseToPlane(e.clientX, e.clientY);
         if (pt) {
-          const d = new THREE.Vector3().subVectors(pt, s.botaoSel.position).normalize();
+          const vetorMira = new THREE.Vector3().subVectors(pt, s.botaoSel.position);
+          vetorMira.y = 0;
+          const distancia = vetorMira.length();
+          const d = vetorMira.normalize();
           d.y = 0;
-          if (d.length() > 0.01) { s.dirSeta.copy(d); atualizarSeta(d); }
+          if (d.length() > 0.01) {
+            s.dirSeta.copy(d);
+            s.potencia = Math.min(1.8, Math.max(0.35, distancia / 5));
+            atualizarSeta(d);
+          }
         }
       }
     };
